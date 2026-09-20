@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "logic-mcp"
+version = "0.3.0"
+description = "Multi-vendor logic-analyzer MCP: live instrument control + decode for Cursor."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.10.0",
+    "pillow>=10.4.0",
+    "pyyaml>=6.0.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3.0"]
+
+[project.scripts]
+logic-mcp = "logic_mcp.server:main"
+logic-mcp-instrument = "logic_mcp.instrument.serve:main"
+
+[project.entry-points."logic_mcp.captures"]
+dsview_csv = "logic_mcp.capture.dsview_csv:DsviewCsvFormat"
+saleae_csv = "logic_mcp.capture.saleae_csv:SaleaeCsvFormat"
+vcd = "logic_mcp.capture.vcd:VcdFormat"
+
+[project.entry-points."logic_mcp.buses"]
+i8080 = "logic_mcp.bus.i8080:I8080Decoder"
+spi = "logic_mcp.bus.spi:SpiDecoder"
+i2c = "logic_mcp.bus.i2c:I2cDecoder"
+uart = "logic_mcp.bus.uart:UartDecoder"
+
+[project.entry-points."logic_mcp.devices"]
+mipi_dcs = "logic_mcp.devices.dcs:MipiDcsDriver"
+
+[project.entry-points."logic_mcp.instruments"]
+mock = "logic_mcp.instrument.mock:MockBackend"
+ipc = "logic_mcp.instrument.ipc:IpcBackend"
+dsview = "logic_mcp.instrument.ipc:DsviewIpcBackend"
+sigrok_cli = "logic_mcp.instrument.sigrok:SigrokCliBackend"
+dslogic = "logic_mcp.instrument.dslogic:DslogicBackend"
+saleae_live = "logic_mcp.instrument.saleae:SaleaeLiveBackend"
+
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/logic_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

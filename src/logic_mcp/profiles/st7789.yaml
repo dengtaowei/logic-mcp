@@ -1,0 +1,28 @@
+id: st7789
+controller: ST7789
+title: Sitronix ST7789 / ST7789V (MIPI DCS)
+driver: mipi_dcs
+width: 240
+height: 320
+col_offset: 0
+row_offset: 0
+default_colmod: 0x05
+default_madctl: 0x00
+notes: >
+  Native GRAM is 240x320. 240x240 modules often need row_offset=80.
+  Override width/height/offsets from MCP tools without changing this file.
+  Add a sibling YAML (e.g. ili9341.yaml) for another controller.
+commands:
+  0xB0: RAMCTRL
+  0xB1: RGBCTRL
+  0xB2: PORCTRL
+  0xB7: GCTRL
+  0xBB: VCOMS
+  0xC0: LCMCTRL
+  0xC2: VDVVRHEN
+  0xC3: VRHS
+  0xC4: VDVS
+  0xC6: FRCTRL2
+  0xD0: PWCTRL1
+  0xE0: PVGAMCTRL
+  0xE1: NVGAMCTRL

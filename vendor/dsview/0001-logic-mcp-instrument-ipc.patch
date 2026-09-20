@@ -1,0 +1,659 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cc82669f..43242075 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -185,12 +185,11 @@ if(Qt5Core_FOUND)
+ 	#find_package(Qt5WinExtras REQUIRED)
+ 	find_package(Qt5Widgets REQUIRED)
+ 	find_package(Qt5Gui REQUIRED)
++	find_package(Qt5Network REQUIRED)
+ 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${Qt5Widgets_EXECUTABLE_COMPILE_FLAGS}")
+-	#set(QT_INCLUDE_DIRS ${Qt5Gui_INCLUDE_DIRS} ${Qt5Widgets_INCLUDE_DIRS} ${Qt5WinExtras_INCLUDE_DIRS})
+-	#set(QT_LIBRARIES Qt5::Gui Qt5::Widgets Qt5::WinExtras)
+-	set(QT_INCLUDE_DIRS ${Qt5Gui_INCLUDE_DIRS} ${Qt5Widgets_INCLUDE_DIRS})
+-	set(QT_LIBRARIES Qt5::Gui Qt5::Widgets)
+-	add_definitions(${Qt5Gui_DEFINITIONS} ${Qt5Widgets_DEFINITIONS})
++	set(QT_INCLUDE_DIRS ${Qt5Gui_INCLUDE_DIRS} ${Qt5Widgets_INCLUDE_DIRS} ${Qt5Network_INCLUDE_DIRS})
++	set(QT_LIBRARIES Qt5::Gui Qt5::Widgets Qt5::Network)
++	add_definitions(${Qt5Gui_DEFINITIONS} ${Qt5Widgets_DEFINITIONS} ${Qt5Network_DEFINITIONS})
+ else()
+ 	find_package(Qt6Core QUIET)
+ endif()
+@@ -200,10 +199,11 @@ if(Qt6Core_FOUND)
+ 	message(STATUS "	 includes:" ${Qt6Core_INCLUDE_DIRS})
+ 	find_package(Qt6Widgets REQUIRED)
+ 	find_package(Qt6Gui REQUIRED)
++	find_package(Qt6Network REQUIRED)
+ 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${Qt6Widgets_EXECUTABLE_COMPILE_FLAGS}")
+-	set(QT_INCLUDE_DIRS ${Qt6Gui_INCLUDE_DIRS} ${Qt6Widgets_INCLUDE_DIRS})
+-	set(QT_LIBRARIES Qt6::Gui Qt6::Widgets)
+-	add_definitions(${Qt6Gui_DEFINITIONS} ${Qt6Widgets_DEFINITIONS})
++	set(QT_INCLUDE_DIRS ${Qt6Gui_INCLUDE_DIRS} ${Qt6Widgets_INCLUDE_DIRS} ${Qt6Network_INCLUDE_DIRS})
++	set(QT_LIBRARIES Qt6::Gui Qt6::Widgets Qt6::Network)
++	add_definitions(${Qt6Gui_DEFINITIONS} ${Qt6Widgets_DEFINITIONS} ${Qt6Network_DEFINITIONS})
+ endif()
+ 
+ if(NOT Qt5Core_FOUND AND NOT Qt6Core_FOUND)
+@@ -241,6 +241,7 @@ set(DSView_SOURCES
+     DSView/pv/log.cpp
+     DSView/pv/sigsession.cpp
+     DSView/pv/mainwindow.cpp
++    DSView/pv/logicmcpipc.cpp
+     DSView/pv/data/snapshot.cpp
+     DSView/pv/data/signaldata.cpp
+     DSView/pv/data/logicsnapshot.cpp
+@@ -361,6 +362,7 @@ set(DSView_HEADERS
+     DSView/pv/log.h
+     DSView/pv/sigsession.h
+     DSView/pv/mainwindow.h
++    DSView/pv/logicmcpipc.h
+     DSView/pv/dialogs/deviceoptions.h
+     DSView/pv/prop/property.h
+     DSView/pv/prop/int.h
+diff --git a/DSView/pv/logicmcpipc.cpp b/DSView/pv/logicmcpipc.cpp
+new file mode 100644
+index 00000000..8390a1a6
+--- /dev/null
++++ b/DSView/pv/logicmcpipc.cpp
+@@ -0,0 +1,437 @@
++#include "logicmcpipc.h"
++
++#include "log.h"
++#include "mainwindow.h"
++#include "sigsession.h"
++#include "storesession.h"
++#include "toolbars/samplingbar.h"
++#include "view/signal.h"
++#include "deviceagent.h"
++#include "data/snapshot.h"
++
++#include <QCoreApplication>
++#include <QDir>
++#include <QElapsedTimer>
++#include <QEventLoop>
++#include <QFileInfo>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QLocalServer>
++#include <QLocalSocket>
++#include <QStandardPaths>
++#include <libsigrok.h>
++
++namespace pv {
++
++LogicMcpIpc::LogicMcpIpc(MainWindow *window, SigSession *session, toolbars::SamplingBar *bar)
++    : QObject(window)
++    , _session(session)
++    , _sampling_bar(bar)
++    , _server(new QLocalServer(this))
++    , _client(NULL)
++    , _handling(false)
++    , _started_ok(false)
++    , _capture_finished(false)
++{
++    connect(_server, SIGNAL(newConnection()), this, SLOT(onNewConnection()));
++}
++
++LogicMcpIpc::~LogicMcpIpc()
++{
++    if (_server) {
++        _server->close();
++        QLocalServer::removeServer(socketPath());
++    }
++}
++
++QString LogicMcpIpc::socketPath() const
++{
++    QByteArray env = qgetenv("LOGIC_MCP_DSVIEW_SOCK");
++    if (!env.isEmpty())
++        return QString::fromLocal8Bit(env);
++
++    QString runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
++    if (runtime.isEmpty())
++        runtime = QDir::tempPath();
++    QDir dir(runtime + "/logic-mcp");
++    dir.mkpath(".");
++    return dir.filePath("dsview.sock");
++}
++
++bool LogicMcpIpc::startServer()
++{
++    const QString path = socketPath();
++    QLocalServer::removeServer(path);
++    if (!_server->listen(path)) {
++        dsv_err("logic_mcp.instrument.v1 listen failed: %s", _server->errorString().toUtf8().data());
++        return false;
++    }
++    dsv_info("logic_mcp.instrument.v1 listening on %s", path.toUtf8().data());
++    return true;
++}
++
++void LogicMcpIpc::onNewConnection()
++{
++    QLocalSocket *sock = _server->nextPendingConnection();
++    if (!sock)
++        return;
++    if (_client) {
++        writeJson(sock, errorObject(0, "busy", "DSView IPC already has a client"));
++        sock->flush();
++        sock->disconnectFromServer();
++        sock->deleteLater();
++        return;
++    }
++    _client = sock;
++    _buf.clear();
++    connect(_client, SIGNAL(readyRead()), this, SLOT(onReadyRead()));
++    connect(_client, SIGNAL(disconnected()), this, SLOT(onDisconnected()));
++}
++
++void LogicMcpIpc::onDisconnected()
++{
++    if (_client) {
++        _client->deleteLater();
++        _client = NULL;
++    }
++    _buf.clear();
++}
++
++void LogicMcpIpc::onReadyRead()
++{
++    if (!_client)
++        return;
++    _buf += _client->readAll();
++    if (_handling)
++        return;
++    drainRequests();
++}
++
++void LogicMcpIpc::drainRequests()
++{
++    _handling = true;
++    while (_client) {
++        int nl = _buf.indexOf('\n');
++        if (nl < 0)
++            break;
++        QByteArray line = _buf.left(nl);
++        _buf.remove(0, nl + 1);
++        if (line.trimmed().isEmpty())
++            continue;
++        QJsonParseError err;
++        QJsonDocument doc = QJsonDocument::fromJson(line, &err);
++        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
++            writeJson(_client, errorObject(0, "protocol_error", "invalid JSON line"));
++            continue;
++        }
++        writeJson(_client, handle(doc.object()));
++    }
++    _handling = false;
++}
++
++QJsonObject LogicMcpIpc::handle(const QJsonObject &req)
++{
++    const int id = req.value("id").toInt();
++    const QString method = req.value("method").toString();
++    const QJsonObject params = req.value("params").toObject();
++
++    if (method == "hello")
++        return resultObject(id, helloResult());
++    if (method == "status")
++        return resultObject(id, statusResult());
++    if (method == "capabilities")
++        return resultObject(id, capabilitiesResult());
++    if (method == "configure")
++        return errorObject(id, "not_supported", "DSView owns sample rate and channels in the GUI");
++    if (method == "start") {
++        QJsonObject r = startCapture();
++        if (r.value("state").toString() == "error")
++            return errorObject(id, "instrument_error", r.value("message").toString("start failed"));
++        return resultObject(id, r);
++    }
++    if (method == "stop")
++        return resultObject(id, stopCapture());
++    if (method == "wait")
++        return resultObject(id, waitCapture(params.value("timeout_s").toDouble(60.0)));
++    if (method == "export") {
++        QJsonObject r = exportCapture(params);
++        if (r.value("state").toString() == "error")
++            return errorObject(id, "instrument_error", r.value("message").toString("export failed"));
++        return resultObject(id, r);
++    }
++    return errorObject(id, "not_supported", QString("Unknown method %1").arg(method));
++}
++
++QJsonObject LogicMcpIpc::helloResult() const
++{
++    QJsonObject o;
++    o["protocol"] = "logic_mcp.instrument.v1";
++    o["vendor"] = "DreamSourceLab";
++    o["product"] = "DSView";
++    o["configure"] = false;
++    o["transport"] = "ipc";
++    QJsonArray methods;
++    methods << "hello" << "status" << "capabilities" << "start" << "stop" << "wait" << "export";
++    o["methods"] = methods;
++    QJsonArray formats;
++    formats << "csv";
++    o["formats"] = formats;
++    if (_session && _session->get_device())
++        o["serial"] = _session->get_device()->name();
++    return o;
++}
++
++QString LogicMcpIpc::hubState() const
++{
++    if (!_session)
++        return "error";
++    if (_session->is_working())
++        return "capturing";
++    if (_capture_finished || (_started_ok && hasLogicData()))
++        return "complete";
++    return "idle";
++}
++
++bool LogicMcpIpc::hasLogicData() const
++{
++    if (!_session)
++        return false;
++    data::Snapshot *snap = _session->get_snapshot(SR_CHANNEL_LOGIC);
++    return snap && !snap->empty();
++}
++
++QJsonObject LogicMcpIpc::statusResult() const
++{
++    QJsonObject o;
++    o["state"] = hubState();
++    if (_session)
++        o["sample_rate_hz"] = static_cast<double>(_session->cur_samplerate());
++    o["has_data"] = hasLogicData();
++    return o;
++}
++
++QJsonObject LogicMcpIpc::capabilitiesResult() const
++{
++    QJsonObject o;
++    QJsonArray channels;
++    bool analog = false;
++    if (_session) {
++        int i = 0;
++        for (auto *sig : _session->get_signals()) {
++            QJsonObject ch;
++            ch["index"] = i++;
++            ch["name"] = sig->get_name();
++            int type = sig->get_type();
++            if (type == SR_CHANNEL_LOGIC)
++                ch["kind"] = "digital";
++            else {
++                ch["kind"] = "analog";
++                analog = true;
++            }
++            channels.append(ch);
++        }
++        o["current_sample_rate_hz"] = static_cast<double>(_session->cur_samplerate());
++    }
++    o["channels"] = channels;
++    o["supports_trigger"] = true;
++    o["supports_duration"] = true;
++    o["supports_sample_count"] = true;
++    o["analog"] = analog;
++    o["streaming"] = false;
++    return o;
++}
++
++QJsonObject LogicMcpIpc::startCapture()
++{
++    QJsonObject o;
++    if (!_session || !_sampling_bar) {
++        o["state"] = "error";
++        o["message"] = "session not ready";
++        return o;
++    }
++    DeviceAgent *dev = _session->get_device();
++    if (!dev || !dev->have_instance()) {
++        o["state"] = "error";
++        o["message"] = "no device selected";
++        return o;
++    }
++    if (dev->get_work_mode() != LOGIC) {
++        o["state"] = "error";
++        o["message"] = "logic-mcp only starts LOGIC mode; switch DSView to logic analyzer";
++        return o;
++    }
++    if (_session->is_doing_action()) {
++        o["state"] = "error";
++        o["message"] = "busy";
++        return o;
++    }
++    if (_session->is_working()) {
++        o["state"] = "capturing";
++        return o;
++    }
++
++    _sampling_bar->commit_settings();
++    if (!_session->start_capture(true)) {
++        _started_ok = false;
++        _capture_finished = false;
++        o["state"] = "error";
++        o["message"] = "start_capture failed";
++        return o;
++    }
++    _started_ok = true;
++    _capture_finished = false;
++    o["state"] = "capturing";
++    return o;
++}
++
++QJsonObject LogicMcpIpc::stopCapture()
++{
++    QJsonObject o;
++    if (_session && _session->is_working())
++        _session->stop_capture();
++    _started_ok = false;
++    _capture_finished = false;
++    o["state"] = "idle";
++    return o;
++}
++
++void LogicMcpIpc::pumpEvents(int ms)
++{
++    QCoreApplication::processEvents(QEventLoop::AllEvents, ms);
++}
++
++QJsonObject LogicMcpIpc::waitCapture(double timeout_s)
++{
++    QJsonObject o;
++    if (!_session) {
++        o["state"] = "error";
++        o["timed_out"] = false;
++        return o;
++    }
++
++    qint64 limit = qMax<qint64>(1, static_cast<qint64>(timeout_s * 1000.0));
++    QElapsedTimer timer;
++    timer.start();
++
++    // Do not treat "not working yet" as complete. Instant captures can
++    // finish before the first poll; only then hasLogicData() is enough.
++    while (!_session->is_working() && !hasLogicData() && timer.elapsed() < limit && _started_ok)
++        pumpEvents(20);
++
++    if (!_session->is_working()) {
++        bool timeout = timer.elapsed() >= limit && !hasLogicData();
++        if (hasLogicData())
++            _capture_finished = true;
++        o["timed_out"] = timeout;
++        o["state"] = timeout ? "capturing" : hubState();
++        return o;
++    }
++
++    while (_session->is_working() && timer.elapsed() < limit)
++        pumpEvents(50);
++
++    bool still = _session->is_working();
++    o["timed_out"] = still;
++    if (!still)
++        _capture_finished = true;
++    o["state"] = still ? "capturing" : "complete";
++    return o;
++}
++
++QJsonObject LogicMcpIpc::exportCapture(const QJsonObject &params)
++{
++    QJsonObject o;
++    if (!_session) {
++        o["state"] = "error";
++        o["message"] = "session not ready";
++        return o;
++    }
++    DeviceAgent *dev = _session->get_device();
++    if (dev && dev->get_work_mode() != LOGIC) {
++        o["state"] = "error";
++        o["message"] = "export is only implemented for LOGIC mode";
++        return o;
++    }
++    if (_session->is_working())
++        _session->stop_capture();
++
++    QString path = params.value("path").toString();
++    QString suffix = params.value("format").toString("csv");
++    if (suffix.startsWith('.'))
++        suffix = suffix.mid(1);
++    if (suffix.isEmpty())
++        suffix = "csv";
++    if (path.isEmpty()) {
++        o["state"] = "error";
++        o["message"] = "export path required";
++        return o;
++    }
++
++    QFileInfo info(path);
++    if (!info.dir().exists() && !info.dir().mkpath(".")) {
++        o["state"] = "error";
++        o["message"] = QString("cannot create directory %1").arg(info.dir().path());
++        return o;
++    }
++
++    StoreSession store(_session);
++    store.SetExportFile(path, suffix);
++    if (!store.export_start()) {
++        QString err = store.error();
++        o["state"] = "error";
++        o["message"] = err.isEmpty() ? QString("export_start failed") : err;
++        return o;
++    }
++
++    QElapsedTimer t;
++    t.start();
++    while (!store.is_busy() && t.elapsed() < 2000)
++        pumpEvents(20);
++    while (store.is_busy())
++        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 50);
++    store.wait();
++
++    if (!store.error().isEmpty()) {
++        o["state"] = "error";
++        o["message"] = store.error();
++        return o;
++    }
++    o["path"] = QFileInfo(path).absoluteFilePath();
++    o["format"] = suffix;
++    o["state"] = "complete";
++    return o;
++}
++
++QJsonObject LogicMcpIpc::errorObject(int id, const QString &code, const QString &message)
++{
++    QJsonObject err;
++    err["code"] = code;
++    err["message"] = message;
++    QJsonObject o;
++    o["id"] = id;
++    o["ok"] = false;
++    o["error"] = err;
++    return o;
++}
++
++QJsonObject LogicMcpIpc::resultObject(int id, const QJsonObject &result)
++{
++    QJsonObject o;
++    o["id"] = id;
++    o["ok"] = true;
++    o["result"] = result;
++    return o;
++}
++
++void LogicMcpIpc::writeJson(QLocalSocket *sock, const QJsonObject &obj)
++{
++    if (!sock)
++        return;
++    QByteArray line = QJsonDocument(obj).toJson(QJsonDocument::Compact);
++    line += '\n';
++    sock->write(line);
++    sock->flush();
++}
++
++} // namespace pv
+diff --git a/DSView/pv/logicmcpipc.h b/DSView/pv/logicmcpipc.h
+new file mode 100644
+index 00000000..519e3aa7
+--- /dev/null
++++ b/DSView/pv/logicmcpipc.h
+@@ -0,0 +1,66 @@
++#ifndef DSVIEW_PV_LOGICMCPIPC_H
++#define DSVIEW_PV_LOGICMCPIPC_H
++
++#include <QObject>
++#include <QByteArray>
++#include <QJsonObject>
++#include <QString>
++
++class QLocalServer;
++class QLocalSocket;
++
++namespace pv {
++
++class SigSession;
++class MainWindow;
++
++namespace toolbars {
++class SamplingBar;
++}
++
++class LogicMcpIpc : public QObject
++{
++    Q_OBJECT
++
++public:
++    LogicMcpIpc(MainWindow *window, SigSession *session, toolbars::SamplingBar *bar);
++    ~LogicMcpIpc();
++
++    bool startServer();
++
++private slots:
++    void onNewConnection();
++    void onReadyRead();
++    void onDisconnected();
++
++private:
++    QString socketPath() const;
++    void drainRequests();
++    QJsonObject handle(const QJsonObject &req);
++    QJsonObject helloResult() const;
++    QJsonObject statusResult() const;
++    QJsonObject capabilitiesResult() const;
++    QJsonObject startCapture();
++    QJsonObject stopCapture();
++    QJsonObject waitCapture(double timeout_s);
++    QJsonObject exportCapture(const QJsonObject &params);
++    QString hubState() const;
++    bool hasLogicData() const;
++    void pumpEvents(int ms);
++    static QJsonObject errorObject(int id, const QString &code, const QString &message);
++    static QJsonObject resultObject(int id, const QJsonObject &result);
++    void writeJson(QLocalSocket *sock, const QJsonObject &obj);
++
++    SigSession *_session;
++    toolbars::SamplingBar *_sampling_bar;
++    QLocalServer *_server;
++    QLocalSocket *_client;
++    QByteArray _buf;
++    bool _handling;
++    bool _started_ok;
++    bool _capture_finished;
++};
++
++} // namespace pv
++
++#endif
+diff --git a/DSView/pv/mainwindow.cpp b/DSView/pv/mainwindow.cpp
+index 74dc348b..95f10eb9 100644
+--- a/DSView/pv/mainwindow.cpp
++++ b/DSView/pv/mainwindow.cpp
+@@ -51,6 +51,7 @@
+ #endif
+ 
+ #include "mainwindow.h"
++#include "logicmcpipc.h"
+ 
+ #include "data/logicsnapshot.h"
+ #include "data/dsosnapshot.h"
+@@ -132,6 +133,7 @@ namespace pv
+         _is_save_confirm_msg = false;
+ 
+         _pattern_mode = "random";
++        _logic_ipc = NULL;
+ 
+         setup_ui();
+ 
+@@ -141,6 +143,9 @@ namespace pv
+         _last_key_press_time = high_resolution_clock::now();
+ 
+         update_title_bar_text();
++
++        _logic_ipc = new LogicMcpIpc(this, _session, _sampling_bar);
++        _logic_ipc->startServer();
+     }
+ 
+     void MainWindow::setup_ui()
+diff --git a/DSView/pv/mainwindow.h b/DSView/pv/mainwindow.h
+index a43e0427..151cbdb0 100644
+--- a/DSView/pv/mainwindow.h
++++ b/DSView/pv/mainwindow.h
+@@ -51,6 +51,7 @@ using std::chrono::milliseconds;
+ 
+ namespace pv {
+  
++class LogicMcpIpc;
+ class SigSession;
+ 
+ namespace toolbars {
+@@ -244,6 +245,8 @@ private:
+     QString         _lst_title_string;
+     QString         _title_ext_string;
+ 
++    LogicMcpIpc     *_logic_ipc;
++
+     int         _key_value;
+     bool        _key_vaild;
+ };
+diff --git a/DSView/pv/storesession.cpp b/DSView/pv/storesession.cpp
+index bad85ce6..780d0ff5 100644
+--- a/DSView/pv/storesession.cpp
++++ b/DSView/pv/storesession.cpp
+@@ -848,16 +848,12 @@ bool StoreSession::export_start()
+     if (_outModule == NULL)
+     {
+         _error = L_S(STR_PAGE_DLG, S_ID(IDS_MSG_STORESESS_EXPORTSTART_ERROR4), "Invalid export format.");
+-    }
+-    else
+-    {
+-        if (_thread.joinable()) _thread.join();
+-        _thread = std::thread(&StoreSession::export_proc, this, snapshot);
+-        return !_has_error;
++        return false;
+     }
+ 
+-    _error.clear();
+-    return false;
++    if (_thread.joinable()) _thread.join();
++    _thread = std::thread(&StoreSession::export_proc, this, snapshot);
++    return !_has_error;
+ }
+ 
+ void StoreSession::export_proc(data::Snapshot *snapshot)
+diff --git a/DSView/pv/storesession.h b/DSView/pv/storesession.h
+index dd5c6fd3..2e40ba90 100644
+--- a/DSView/pv/storesession.h
++++ b/DSView/pv/storesession.h
+@@ -85,6 +85,11 @@ public:
+         return _file_name;
+     }
+ 
++    inline void SetExportFile(const QString &path, const QString &suffix){
++        _file_name = path;
++        _suffix = suffix;
++    }
++
+     bool IsLogicDataType();
+ 
+     inline void SetDataRange(uint64_t start_index, uint64_t end_index){

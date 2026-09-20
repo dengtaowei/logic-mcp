@@ -62,6 +62,8 @@ States: after `start`, `wait` until `complete`, then `export`. Instant backends 
 
 **This repo:** subclass `InstrumentBackend` + `ConnectedInstrument`, register `logic_mcp.instruments`.
 
-**Out of process:** listen on the socket, implement the table above. Python reference: `logic-mcp-instrument`. DSView: `LogicMcpIpc` in the DSView tree.
+**Out of process:** listen on the socket, implement the table above. Python reference: `logic-mcp-instrument`.
+
+**Patching vendor source:** keep a unified diff in `vendor/<id>/` (see [`vendor/README.md`](../../../vendor/README.md)). DSView: [`vendor/dsview`](../../../vendor/dsview) (`LogicMcpIpc`).
 
 Do not add `dsview_set_rate`-style MCP tools. Decode stays in `logic-mcp`.

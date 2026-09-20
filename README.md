@@ -34,14 +34,14 @@ MCP tool names stay vendor-neutral. Do not add `dsview_set_rate`-style tools.
 | Buses | `i8080` | `spi`, `i2c`, `uart` |
 | Devices | `mipi_dcs` + `st7789` profile | other panels via extra YAML |
 
-`dslogic` drives hardware through **sigrok-cli**, not the DSView GUI. USB is exclusive: close DSView before using `dslogic`. The stable DSView path is a patched GUI that listens on the IPC socket (`backend=dsview`).
+`dslogic` drives hardware through **sigrok-cli**, not the DSView GUI. USB is exclusive: close DSView before using `dslogic`. The stable DSView path is the patch in [`vendor/dsview`](vendor/dsview) (`backend=dsview`).
 
 ## Requirements
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - Optional: `sigrok-cli` on `PATH` (or `SIGROK_CLI`) for live `sigrok_cli` / `dslogic`
-- Optional: patched DSView listening on `$XDG_RUNTIME_DIR/logic-mcp/dsview.sock`
+- Optional: DSView rebuilt with the patch in [`vendor/dsview`](vendor/dsview) (listens on `$XDG_RUNTIME_DIR/logic-mcp/dsview.sock`)
 
 ## Install
 
@@ -152,6 +152,8 @@ Entry points in `pyproject.toml`:
 
 Out of process: listen on the Unix socket and implement `hello` / `status` / `start` / `stop` / `wait` / `export` (and `configure` / `capabilities` if you own config). Python reference: `logic-mcp-instrument`.
 
+When a vendor’s own GUI/SDK must be patched, put a unified diff under [`vendor/<id>/`](vendor/README.md) (pinned upstream commit + `series`). Do not copy their whole tree. First example: [`vendor/dsview`](vendor/dsview).
+
 Panel YAML (`profiles/st7789.yaml`, or `LOGIC_MCP_PROFILES`): `width`, `height`, offsets, extra DCS opcodes.
 
 ## Environment
@@ -166,4 +168,6 @@ Panel YAML (`profiles/st7789.yaml`, or `LOGIC_MCP_PROFILES`): `width`, `height`,
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) for logic-mcp.
+
+Patches under [`vendor/`](vendor/README.md) are against other projects and keep **that** project’s license. [`vendor/dsview`](vendor/dsview) is GPLv3+ (DreamSourceLab DSView).

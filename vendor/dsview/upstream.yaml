@@ -1,0 +1,10 @@
+id: dsview
+backend_id: dsview
+protocol: logic_mcp.instrument.v1
+configure: false
+socket_env: LOGIC_MCP_DSVIEW_SOCK
+upstream:
+  url: https://github.com/DreamSourceLab/DSView.git
+  commit: 2e9e2c8e726df4ef5687d39b83d4f797cc44b574
+  describe: v1.3.2-53-g2e9e2c8e
+license: GPL-3.0-or-later

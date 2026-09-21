@@ -1,0 +1,116 @@
+{
+  "capture": {
+    "ok": true,
+    "format_id": "dsview_csv",
+    "vendor": "DreamSourceLab",
+    "channels": [
+      "RS",
+      "CS",
+      "RD",
+      "WR",
+      "DB0",
+      "DB1",
+      "DB2",
+      "DB3",
+      "DB4",
+      "DB5",
+      "DB6",
+      "DB7"
+    ],
+    "sample_rate_hz": 100000000.0,
+    "sample_count": 35,
+    "synthetic": true
+  },
+  "bus_decode": {
+    "ok": true,
+    "protocol": "i8080",
+    "event_count": 17,
+    "by_kind": {
+      "rd": 1,
+      "wr": 16
+    }
+  },
+  "display_analyze": {
+    "ok": true,
+    "decoder": "mipi_dcs",
+    "profile": "st7789",
+    "command_count": 6,
+    "commands_truncated": false,
+    "commands": [
+      {
+        "schema": "logic_mcp.commands.v1",
+        "t": 4e-07,
+        "opcode": "0x3A",
+        "name": "COLMOD",
+        "data_len": 1,
+        "is_pixel": false,
+        "params": [
+          "0x55"
+        ]
+      },
+      {
+        "schema": "logic_mcp.commands.v1",
+        "t": 8e-07,
+        "opcode": "0x11",
+        "name": "SLPOUT",
+        "data_len": 0,
+        "is_pixel": false,
+        "params": []
+      },
+      {
+        "schema": "logic_mcp.commands.v1",
+        "t": 1e-06,
+        "opcode": "0x36",
+        "name": "MADCTL",
+        "data_len": 1,
+        "is_pixel": false,
+        "params": [
+          "0x00"
+        ]
+      },
+      {
+        "schema": "logic_mcp.commands.v1",
+        "t": 1.4e-06,
+        "opcode": "0x2A",
+        "name": "CASET",
+        "data_len": 4,
+        "is_pixel": false,
+        "params": [
+          "0x00",
+          "0x00",
+          "0x00",
+          "0xEF"
+        ]
+      },
+      {
+        "schema": "logic_mcp.commands.v1",
+        "t": 2.4e-06,
+        "opcode": "0x2B",
+        "name": "RASET",
+        "data_len": 4,
+        "is_pixel": false,
+        "params": [
+          "0x00",
+          "0x00",
+          "0x01",
+          "0x3F"
+        ]
+      },
+      {
+        "schema": "logic_mcp.commands.v1",
+        "t": 3.4e-06,
+        "opcode": "0x29",
+        "name": "DISPON",
+        "data_len": 0,
+        "is_pixel": false,
+        "params": []
+      }
+    ]
+  },
+  "display_reconstruct": {
+    "ok": true,
+    "pixels_written": 0,
+    "ramwr_count": 0,
+    "png": "expected/panel_init.png"
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "note": "Illustrative full-frame 240x320 RGB565 fill. The CSV is not in git.",
+  "capture": {
+    "ok": true,
+    "format_id": "dsview_csv",
+    "vendor": "DreamSourceLab",
+    "channels": [
+      "RS",
+      "CS",
+      "RD",
+      "WR",
+      "DB0",
+      "DB1",
+      "DB2",
+      "DB3",
+      "DB4",
+      "DB5",
+      "DB6",
+      "DB7"
+    ]
+  },
+  "bus_decode": {
+    "ok": true,
+    "protocol": "i8080",
+    "event_count": 153612,
+    "by_kind": {
+      "wr": 153612
+    }
+  },
+  "display_analyze": {
+    "ok": true,
+    "decoder": "mipi_dcs",
+    "profile": "st7789",
+    "command_count": 4,
+    "commands_truncated": false,
+    "commands": [
+      {
+        "schema": "logic_mcp.commands.v1",
+        "opcode": "0x2A",
+        "name": "CASET",
+        "data_len": 4,
+        "is_pixel": false,
+        "params": ["0x00", "0x00", "0x00", "0xEF"]
+      },
+      {
+        "schema": "logic_mcp.commands.v1",
+        "opcode": "0x2B",
+        "name": "RASET",
+        "data_len": 4,
+        "is_pixel": false,
+        "params": ["0x00", "0x00", "0x01", "0x3F"]
+      },
+      {
+        "schema": "logic_mcp.commands.v1",
+        "opcode": "0x2C",
+        "name": "RAMWR",
+        "data_len": 153600,
+        "is_pixel": true,
+        "params": null
+      },
+      {
+        "schema": "logic_mcp.commands.v1",
+        "opcode": "0x00",
+        "name": "NOP",
+        "data_len": 0,
+        "is_pixel": false,
+        "params": []
+      }
+    ]
+  },
+  "display_reconstruct": {
+    "ok": true,
+    "width": 240,
+    "height": 320,
+    "pixels_written": 76800,
+    "pixel_overflow": 0,
+    "ramwr_count": 1,
+    "window": {
+      "xs": 0,
+      "xe": 239,
+      "ys": 0,
+      "ye": 319
+    },
+    "png": "expected/fill_red.png"
+  }
+}

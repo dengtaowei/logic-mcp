@@ -8,7 +8,7 @@ DreamSourceLab / DSView, Saleae, and VCD are **plugins**, not the product name.
 Cursor ── stdio MCP ── logic-mcp
                          ├─ in-process: mock / sigrok_cli / dslogic
                          └─ ipc / dsview ── Unix socket ── vendor process
-                              └─ LogicCapture → bus decode → interpret / PNG
+                              └─ LogicCapture → bus decode → DCS log / PNG
 ```
 
 ## What it does
@@ -33,8 +33,6 @@ MCP tool names stay vendor-neutral. Do not add `dsview_set_rate`-style tools.
 | Capture files | DSView / libsigrok4DSL CSV | Saleae CSV, VCD |
 | Buses | `i8080` | `spi`, `i2c`, `uart` |
 | Devices | `mipi_dcs` + `st7789` profile | other panels via extra YAML |
-
-`dslogic` drives hardware through **sigrok-cli**, not the DSView GUI. USB is exclusive: close DSView before using `dslogic`. The stable DSView path is the patch in [`vendor/dsview`](vendor/dsview) (`backend=dsview`).
 
 ## Requirements
 
@@ -69,28 +67,21 @@ Add to Cursor MCP settings. Point `--directory` at your clone:
 
 The server speaks MCP over stdio. It returns JSON summaries, not raw sample dumps.
 
+Then open **Agent** chat and talk to the model; you do not run decode scripts. First session (ST7789 over 8080): [examples/README.md](examples/README.md).
+
 ## Workflows
 
 ### Offline CSV
 
 ```text
-capture_open(path) → bus_decode(protocol, channel_map) → interpret / display_reconstruct
+capture_open(path) → bus_decode(protocol, channel_map)
+                  → display_analyze          # command log
+                  → display_reconstruct      # command log + PNG
 ```
 
-Pin maps are explicit. Column names or 0-based indices:
+`channel_map` is required. Values are CSV column names or 0-based indices. A DSView export named `RS,CS,RD,WR,DB0…DB7` maps like [`examples/channel_maps/i8080_dsview.json`](examples/channel_maps/i8080_dsview.json) (`dc` → `RS`, not `CS`).
 
-```json
-{
-  "protocol": "i8080",
-  "channel_map": {
-    "d0": "0", "d1": "1", "d2": "2", "d3": "3",
-    "d4": "4", "d5": "5", "d6": "6", "d7": "7",
-    "wr": "WR", "dc": "DC", "cs": "CS"
-  }
-}
-```
-
-`display_reconstruct` (profile `st7789`) writes a command log and PNG frames under `out/` (or `LOGIC_MCP_OUT`).
+PNGs land under `out/` (or `LOGIC_MCP_OUT`).
 
 ### Full config in MCP (mock / sigrok)
 
@@ -117,9 +108,9 @@ instrument_open("dsview") → instrument_start → instrument_wait → instrumen
 |---|---|---|---|
 | `mock` | in-process | MCP | Always available; for tests and the reference hub |
 | `sigrok_cli` | in-process subprocess | MCP | Portable probe via `sigrok-cli` |
-| `dslogic` | in-process subprocess | MCP | `sigrok_cli` filtered to DreamSourceLab drivers |
+| `dslogic` | in-process subprocess | MCP | `sigrok_cli` filtered to DreamSourceLab drivers. USB is exclusive: close DSView first. |
 | `ipc` | Unix socket | advertised by hub | Default `$XDG_RUNTIME_DIR/logic-mcp/instrument.sock` |
-| `dsview` | Unix socket | GUI | Default `$XDG_RUNTIME_DIR/logic-mcp/dsview.sock` |
+| `dsview` | Unix socket | GUI | Default `$XDG_RUNTIME_DIR/logic-mcp/dsview.sock`. Needs the [vendor/dsview](vendor/dsview) patch. |
 | `saleae_live` | — | — | Unimplemented (Logic 2 Automation API) |
 
 Reference hub (wraps an in-process backend behind the socket):

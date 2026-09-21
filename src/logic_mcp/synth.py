@@ -116,3 +116,66 @@ DEFAULT_MAP = {
     "wr": "WR",
     "rd": "RD",
 }
+
+
+# Probe labels commonly exported from DSView (RS = D/C).
+DSVIEW_I8080_HEADER = [
+    "Time(s)", "RS", "CS", "RD", "WR",
+    "DB0", "DB1", "DB2", "DB3", "DB4", "DB5", "DB6", "DB7",
+]
+DSVIEW_I8080_MAP = {
+    "d0": "DB0", "d1": "DB1", "d2": "DB2", "d3": "DB3",
+    "d4": "DB4", "d5": "DB5", "d6": "DB6", "d7": "DB7",
+    "wr": "WR", "dc": "RS", "cs": "CS", "rd": "RD",
+}
+
+
+def _row_dsview(t: float, data: int, *, rs: int, cs: int, rd: int, wr: int) -> list[str]:
+    bits = [(data >> i) & 1 for i in range(8)]
+    return [f"{t:.9e}", str(rs), str(cs), str(rd), str(wr), *[str(b) for b in bits]]
+
+
+def write_dsview_bytes(
+    rows: list[list[str]],
+    t: float,
+    payload: bytes,
+    *,
+    rs: int,
+    cs: int = 0,
+    rd: int = 1,
+    dt: float = 1e-7,
+) -> float:
+    for value in payload:
+        t += dt
+        rows.append(_row_dsview(t, value, rs=rs, cs=cs, rd=rd, wr=0))
+        t += dt
+        rows.append(_row_dsview(t, value, rs=rs, cs=cs, rd=rd, wr=1))
+    return t
+
+
+def build_st7789_init_csv(path: Path, sample_rate_hz: float = 100_000_000) -> Path:
+    """Synthetic ST7789 init (datasheet-style). Not a dump from a particular board."""
+    rows: list[list[str]] = []
+    t = 0.0
+    rows.append(_row_dsview(t, 0, rs=1, cs=1, rd=1, wr=1))
+    t += 1e-7
+    rows.append(_row_dsview(t, 0, rs=1, cs=0, rd=0, wr=1))
+    t += 1e-7
+    rows.append(_row_dsview(t, 0, rs=1, cs=0, rd=1, wr=1))
+    t = write_dsview_bytes(rows, t, bytes([0x3A]), rs=0)
+    t = write_dsview_bytes(rows, t, bytes([0x55]), rs=1)
+    t = write_dsview_bytes(rows, t, bytes([0x11]), rs=0)
+    t = write_dsview_bytes(rows, t, bytes([0x36]), rs=0)
+    t = write_dsview_bytes(rows, t, bytes([0x00]), rs=1)
+    t = write_dsview_bytes(rows, t, bytes([0x2A]), rs=0)
+    t = write_dsview_bytes(rows, t, bytes([0x00, 0x00, 0x00, 0xEF]), rs=1)
+    t = write_dsview_bytes(rows, t, bytes([0x2B]), rs=0)
+    t = write_dsview_bytes(rows, t, bytes([0x00, 0x00, 0x01, 0x3F]), rs=1)
+    write_dsview_bytes(rows, t, bytes([0x29]), rs=0)
+    return write_logic_csv(
+        path,
+        DSVIEW_I8080_HEADER,
+        rows,
+        sample_rate_hz=sample_rate_hz,
+        generator="logic-mcp example",
+    )

@@ -9,3 +9,8 @@ dist/
 build/
 *.png
 !tests/fixtures/**
+!examples/expected/*.png
+# Full-frame RAMWR CSVs are too large; keep them out of git.
+examples/captures/fill_red.csv
+# Do not vendor lab dumps of product firmware. Only synthetic captures/.
+
